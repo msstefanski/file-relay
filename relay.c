@@ -165,18 +165,19 @@ int main(int argc, char *argv[])
     //Accept and handle client connections
     fd_set rdfs;
     struct timeval tv;
-    tv.tv_sec = 0;
-    tv.tv_usec = 250000;
     void *troot = NULL;
     struct transfer_info tr;
     while (!stop) {
         FD_ZERO(&rdfs);
         FD_SET(lsd, &rdfs);
+        tv.tv_sec = 0;
+        tv.tv_usec = 250000;
         int sig = select(lsd+1, &rdfs, NULL, NULL, &tv);
         if (sig < 0) {
             fprintf(stderr, "%s\n", strerror(errno));
             break;
         } else if (sig == 0) {
+            //timeout reached, allows us to exit on demand
             continue;
         }
 
@@ -186,9 +187,11 @@ int main(int argc, char *argv[])
             fprintf(stderr, "Failed to accept client socket: %s\n", strerror(errno));
             continue;
         }
+        //make our client socket non blocking for the initial send
+        //int flags = fcntl(csd, F_GETFL, 0);
+        //fcntl(csd, F_GETFL, flags & ~O_NONBLOCK);
 
         //Send our identity first
-        //TODO: in non-blocking manner...
         send(csd, &identity, 4, 0);
 
         //read byte identifier from socket
@@ -205,6 +208,9 @@ int main(int argc, char *argv[])
         recv(csd, buffer, SHA_DIGEST_LENGTH*2, 0);
         buffer[SHA_DIGEST_LENGTH*2+1] = '\0';
 
+        //allow blocking again
+        //fcntl(csd, F_GETFL, flags | O_NONBLOCK);
+
         if (response == sender)
             printf("got sender with hash %s\n", buffer);
         else if (response == receiver)
@@ -214,12 +220,11 @@ int main(int argc, char *argv[])
         tr.hash = buffer;
         tr.infd = csd;
 
-        //if got sha hash, check hash map
+        //if got sha hash, check search tree
         void **obj = tfind((void *)&tr, &troot, compare);
         if (obj) {
             //match found, this should be the receiver
             struct transfer_info *match = (struct transfer_info *)*obj;
-            printf("got node from search tree: %s\n", match->hash);
             if (!tdelete(*obj, &troot, compare)) {
                 fprintf(stderr, "No hash found. Failed to delete node\n");
                 continue;
@@ -233,7 +238,7 @@ int main(int argc, char *argv[])
             match->outfd = csd;
             //spawn new thread
             pthread_attr_init(&match->tattr);
-            pthread_attr_setstacksize(&match->tattr, 2048);
+            //pthread_attr_setstacksize(&match->tattr, 12048);
             pthread_create(&match->tid, &match->tattr, relay_data, (void *)match);
         } else {
             //not found, this should be the sender

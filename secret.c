@@ -56,6 +56,12 @@ char *make_secret(int num_words)
 
     fclose(f);
 
+    char *quote = strstr(words, "'");
+    while (quote != NULL) {
+        quote[0] = 'Q';
+        quote = strstr(words, "'");
+    }
+
     return words;
 }
 

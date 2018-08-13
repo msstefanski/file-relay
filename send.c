@@ -39,6 +39,14 @@ int main(int argc, char *argv[0])
     }
     int port = strtol(portstr, NULL, 10);
 
+    //Stat the file to ensure it exists and is readable before bothering with
+    //anything else
+    struct stat file_info;
+    if (stat(filename, &file_info)) {
+        fprintf(stderr, "Failed to stat file\n");
+        exit(1);
+    }
+
     //Generate a secret code and print it. Note: This is the only output on stdout!
     char *secret = make_secret(4);
     printf("%s\n", secret);
