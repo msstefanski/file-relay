@@ -6,7 +6,8 @@
 if [[ $# -gt 0 ]]; then
     port=$1
 else
-    port=8082
+    port=$(( ( RANDOM % 50000 ) + 10000 ))
+    echo "using port $port"
 fi
 
 testdir=./testdir
@@ -40,18 +41,30 @@ function run_tests {
     mkdir -p "$testdir"/in "$testdir"/out
     ret=0
 
-    ./relay :$port > "$testdir"/relay.log 2>&1 &
+    ./relay :$port &# > "$testdir"/relay.log 2>&1 &
 
     #generate sample data from 100 bytes to 10MB
+    y=0
     for x in $(seq 100 5000 100000); do
-        #head -c $x /dev/urandom | tr -dc 'a-zA-Z0-9~!@#$%^&*_-' > "$testdir"/in/in_$x.dat
-        dd count=$x if=/dev/urandom of="$testdir"/in/in_$x.dat
+        y=$(( y + 1 ))
+        dd count=$x if=/dev/urandom of="$testdir"/in/in_$y.dat > /dev/null 2>&1
     done
 
-    #run all the send/receives
+    #run all the sends
+    y=0
     for x in $(seq 100 5000 100000); do
-        secret=$(./send localhost:$port "$testdir"/in/in_$x.dat &)
-        ./receive localhost:$port "$secret" "$testdir"/out/out_$x.dat &
+        y=$(( y + 1 ))
+        ./send localhost:$port "$testdir"/in/in_$y.dat >> "$testdir"/secrets.txt &
+    done
+    #wait for secrets to be available
+    while [[ $(wc -l "$testdir"/secrets.txt | cut -d" " -f1) -lt 20 ]]; do
+        sleep 1
+    done
+    #run all the receives
+    y=0
+    for secret in $(cat "$testdir"/secrets.txt); do
+        y=$(( y + 1 ))
+        ./receive localhost:$port $secret "$testdir"/out/out_$y.dat &
     done
 
     while true; do
@@ -65,15 +78,17 @@ function run_tests {
     done
 
     #verify the results
+    y=0
     for x in $(seq 100 5000 100000); do
-        insum=$(md5sum "$testdir"/in/in_$x.dat | awk '{print $1}')
-        outsum=$(md5sum "$testdir"/out/out_$x.dat | awk '{print $1}')
+        y=$(( y + 1 ))
+        insum=$(md5sum "$testdir"/in/in_$y.dat | awk '{print $1}')
+        outsum=$(md5sum "$testdir"/out/out_$y.dat | awk '{print $1}')
         if [[ "$insum" != "$outsum" ]]; then
-            echo -e "${red}Copy failed: $x${reset}"
+            echo -e "${red}Copy failed: $y${reset}"
             ret=1
         fi
     done
-    #return $ret
+    exit $ret
 }
 
 run_tests

@@ -83,16 +83,30 @@ int main(int argc, char *argv[0])
     send(sd, &identity, 4, 0);
 
     //Send the secret code hash to pair us with a receiver
-    send(sd, hash, strlen(hash), 0);
+    send(sd, hash, SHA_DIGEST_LENGTH*2, 0);
     //------------------------------------------------------------------------
     //recv data from socket, decrypt data using secret, write to file
 
     char cpbuf[8192];
     int fd = open(output, O_CREAT | O_WRONLY, 0644);
+    if (fd < 0) {
+        fprintf(stderr, "Failed to open %s: %s\n", output, strerror(errno));
+        goto cleanup_exit;
+    }
+
     while (1) {
-        ssize_t rres = recv(sd, &cpbuf[0], 8192, MSG_WAITALL);
-        if (!rres)
+        ssize_t rres = read(sd, &cpbuf[0], 8192);
+        if (rres < 0) {
+            if (errno == EAGAIN) {
+                fprintf(stderr, "EAGAIN\n");
+                continue;
+            } else {
+                fprintf(stderr, "fail: %s\n", strerror(errno));
+                break;
+            }
+        } else if (rres == 0) {
             break;
+        }
         ssize_t wres = write(fd, &cpbuf[0], rres);
         if (wres != rres) {
             fprintf(stderr, "failed to copy data\n");
@@ -100,6 +114,7 @@ int main(int argc, char *argv[0])
         }
     }
 
+cleanup_exit:
     close(fd);
     close(sd);
 

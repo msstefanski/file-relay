@@ -238,7 +238,7 @@ int main(int argc, char *argv[])
             match->outfd = csd;
             //spawn new thread
             pthread_attr_init(&match->tattr);
-            //pthread_attr_setstacksize(&match->tattr, 12048);
+            pthread_attr_setstacksize(&match->tattr, 2048);
             pthread_create(&match->tid, &match->tattr, relay_data, (void *)match);
         } else {
             //not found, this should be the sender

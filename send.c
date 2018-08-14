@@ -50,6 +50,7 @@ int main(int argc, char *argv[0])
     //Generate a secret code and print it. Note: This is the only output on stdout!
     char *secret = make_secret(4);
     printf("%s\n", secret);
+    fflush(stdout);
 
     //Hash the secret so we never transmit the secret itself
     char *hash = make_hash(secret);
@@ -94,24 +95,39 @@ int main(int argc, char *argv[0])
     send(sd, &identity, 4, 0);
 
     //Send the secret code hash to pair us with a receiver
-    send(sd, hash, strlen(hash), 0);
+    send(sd, hash, SHA_DIGEST_LENGTH*2, 0);
 
     //wait for response from relay to start sending file
     //read file, encrypt data using secret, send encrypted data to socket
 
     char cpbuf[8192];
     int fd = open(filename, O_RDONLY);
+    if (fd < 0) {
+        fprintf(stderr, "Failed to open %s: %s\n", filename, strerror(errno));
+        goto cleanup_exit;
+    }
+
     while (1) {
         ssize_t rres = read(fd, &cpbuf[0], 8192);
-        if (!rres)
+        if (rres < 0) {
+            if (errno == EAGAIN) {
+                fprintf(stderr, "EAGAIN\n");
+                continue;
+            } else {
+                fprintf(stderr, "fail: %s\n", strerror(errno));
+                break;
+            }
+        } else if (rres == 0) {
             break;
-        ssize_t wres = send(sd, &cpbuf[0], rres, 0);
+        }
+        ssize_t wres = write(sd, &cpbuf[0], rres);
         if (wres != rres) {
             fprintf(stderr, "failed to copy data\n");
             break;
         }
     }
 
+cleanup_exit:
     close(fd);
     close(sd);
 
