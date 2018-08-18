@@ -125,7 +125,7 @@ int main(int argc, char *argv[0])
         } else if (rres == 0) {
             break;
         }
-        ssize_t wres = write(sd, &cpbuf[0], rres);
+        ssize_t wres = send(sd, &cpbuf[0], rres, 0);
         if (wres != rres) {
             fprintf(stderr, "failed to copy data\n");
             break;

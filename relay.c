@@ -154,8 +154,7 @@ void *relay_data(void *opaque)
 
     close(pair->infd);
     close(pair->outfd);
-    free(pair->hash);
-    free(pair->filename);
+    transfer_info_free(pair);
     free(pair);
 
     //before we exit, join other exited threads to free resources and prevent
@@ -249,8 +248,8 @@ int main(int argc, char *argv[])
         //ever want to block the listen thread, so if a client connects and
         //doesn't respond correctly right away just drop it and wait for a new
         //one.
-        //int flags = fcntl(csd, F_GETFL, 0);
-        //fcntl(csd, F_GETFL, flags & ~O_NONBLOCK);
+        int flags = fcntl(csd, F_GETFL, 0);
+        fcntl(csd, F_GETFL, flags & ~O_NONBLOCK);
 
         //Send our identity first
         send(csd, &identity, 4, MSG_NOSIGNAL);
@@ -290,7 +289,7 @@ int main(int argc, char *argv[])
         }
 
         //Set the client socket to allow blocking again (in it's own thread)
-        //fcntl(csd, F_GETFL, flags | O_NONBLOCK);
+        fcntl(csd, F_GETFL, flags | O_NONBLOCK);
 
         memset(&tr, 0, sizeof(struct transfer_info));
         tr.hash = shabuf;
@@ -325,8 +324,7 @@ int main(int argc, char *argv[])
             obj = tsearch((void *)ntr, &troot, compare);
             if (!obj) {
                 fprintf(stderr, "Insufficient memory to add hash to binary search tree\n");
-                free(ntr->hash);
-                free(ntr->filename);
+                transfer_info_free(ntr);
                 free(ntr);
                 close(csd);
                 continue;
