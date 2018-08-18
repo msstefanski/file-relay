@@ -55,6 +55,7 @@ function run_tests {
     for x in $(seq 100 5000 100000); do
         y=$(( y + 1 ))
         ./send localhost:$port "$testdir"/in/in_$y.dat >> "$testdir"/secrets.txt &
+        sleep 1
     done
     #wait for secrets to be available
     while [[ $(wc -l "$testdir"/secrets.txt | cut -d" " -f1) -lt 20 ]]; do
@@ -88,7 +89,7 @@ function run_tests {
             ret=1
         fi
     done
-    exit $ret
+    #exit $ret
 }
 
 run_tests

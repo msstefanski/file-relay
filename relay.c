@@ -11,12 +11,21 @@
 #include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <sys/syscall.h>
 #include <openssl/sha.h>
 
 static const uint32_t identity = 0xdeadbeef;
 static const uint32_t sender   = 0xadeafbee;
 static const uint32_t receiver = 0xfacadeed;
+static int lsd = 0; //main socket file descriptor to bind/listen on
 static int stop = 0;
+SLIST_HEAD(join_head, join_entry) join_head = SLIST_HEAD_INITIALIZER(join_head);
+struct join_entry {
+    pthread_t thread;
+    pid_t tid;
+    SLIST_ENTRY(join_entry) entries;
+};
+static pthread_mutex_t join_lock = PTHREAD_MUTEX_INITIALIZER;
 
 
 void help()
@@ -26,6 +35,7 @@ void help()
 
 void interrupt(int sig)
 {
+    shutdown(lsd, SHUT_RDWR);
     printf("signal received\n");
     stop = 1;
 }
@@ -113,6 +123,26 @@ void *relay_data(void *opaque)
     free(pair->hash);
     free(pair);
 
+    //before we exit, join other exited threads to free resources and prevent
+    //maxing out system thread count
+    pthread_mutex_lock(&join_lock);
+    struct join_entry *je;
+    while (!SLIST_EMPTY(&join_head)) {
+        je = SLIST_FIRST(&join_head);
+        SLIST_REMOVE_HEAD(&join_head, entries);
+        printf("joining finished thread %d\n", je->tid);
+        fflush(stdout);
+        pthread_join(je->thread, NULL);
+        free(je);
+    }
+
+    //now add this thread to the list of threads to join and free later
+    je = malloc(sizeof(struct join_entry));
+    je->thread = pthread_self();
+    je->tid = syscall(SYS_gettid);
+    SLIST_INSERT_HEAD(&join_head, je, entries);
+    pthread_mutex_unlock(&join_lock);
+
     printf("thread exiting\n");
 
     return NULL;
@@ -144,7 +174,7 @@ int main(int argc, char *argv[])
     int port = strtol(portstr, NULL, 10);
 
     //Create listen socket and bind to it
-    int lsd = socket(AF_INET, SOCK_STREAM, 0);
+    lsd = socket(AF_INET, SOCK_STREAM, 0);
     if (lsd < 0) {
         fprintf(stderr, "Failed to create socket: %s\n", strerror(errno));
         exit(1);
