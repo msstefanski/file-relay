@@ -39,11 +39,12 @@ function run_tests {
     set -e
     rm -rf "$testdir"
     mkdir -p "$testdir"/in "$testdir"/out
-    ret=0
+    passed=1
 
     ./relay :$port &# > "$testdir"/relay.log 2>&1 &
 
     #generate sample data from 100 bytes to 10MB
+    echo "Generating test data..."
     y=0
     for x in $(seq 100 5000 100000); do
         y=$(( y + 1 ))
@@ -51,6 +52,7 @@ function run_tests {
     done
 
     #run all the sends
+    echo "Running all sends..."
     y=0
     for x in $(seq 100 5000 100000); do
         y=$(( y + 1 ))
@@ -62,6 +64,7 @@ function run_tests {
         sleep 1
     done
     #run all the receives
+    echo "Running all receives..."
     y=0
     for secret in $(cat "$testdir"/secrets.txt); do
         y=$(( y + 1 ))
@@ -74,11 +77,12 @@ function run_tests {
         if [[ $sends -eq 0 && $recvs -eq 0 ]]; then
             break
         fi
-        echo "Waiting for sends/receives"
+        echo "Waiting for sends/receives..."
         sleep 1
     done
 
     #verify the results
+    echo "Verifying all data transferred correctly..."
     y=0
     for x in $(seq 100 5000 100000); do
         y=$(( y + 1 ))
@@ -86,15 +90,14 @@ function run_tests {
         outsum=$(md5sum "$testdir"/out/out_$y.dat | awk '{print $1}')
         if [[ "$insum" != "$outsum" ]]; then
             echo -e "${red}Copy failed: $y${reset}"
-            ret=1
+            passed=0
         fi
     done
-    #exit $ret
 }
 
 run_tests
-if [[ $? -gt 0 ]]; then
-    cleanup_failure
-else
+if [[ $passed -gt 0 ]]; then
     cleanup_success
+else
+    cleanup_failure
 fi

@@ -36,7 +36,6 @@ void help()
 void interrupt(int sig)
 {
     shutdown(lsd, SHUT_RDWR);
-    printf("signal received\n");
     stop = 1;
 }
 
@@ -76,6 +75,21 @@ static void close_unmatched_connections(const void *nodep, const VISIT which, co
     }
 }
 
+static void join_finished_threads()
+{
+    pthread_mutex_lock(&join_lock);
+    struct join_entry *je;
+    while (!SLIST_EMPTY(&join_head)) {
+        je = SLIST_FIRST(&join_head);
+        SLIST_REMOVE_HEAD(&join_head, entries);
+        printf("joining finished thread %d\n", je->tid);
+        fflush(stdout);
+        pthread_join(je->thread, NULL);
+        free(je);
+    }
+    pthread_mutex_unlock(&join_lock);
+}
+
 static int copy_using_splice(int in, int out)
 {
     int p[2];
@@ -111,7 +125,7 @@ void *relay_data(void *opaque)
     }
 
     printf("thread started\n");
-#if 0
+#if 1
     copy_using_splice(pair->infd, pair->outfd);
 #else
     size_t b = copy_using_read_write_loop(pair->infd, pair->outfd);
@@ -125,19 +139,11 @@ void *relay_data(void *opaque)
 
     //before we exit, join other exited threads to free resources and prevent
     //maxing out system thread count
-    pthread_mutex_lock(&join_lock);
-    struct join_entry *je;
-    while (!SLIST_EMPTY(&join_head)) {
-        je = SLIST_FIRST(&join_head);
-        SLIST_REMOVE_HEAD(&join_head, entries);
-        printf("joining finished thread %d\n", je->tid);
-        fflush(stdout);
-        pthread_join(je->thread, NULL);
-        free(je);
-    }
+    join_finished_threads();
 
     //now add this thread to the list of threads to join and free later
-    je = malloc(sizeof(struct join_entry));
+    pthread_mutex_lock(&join_lock);
+    struct join_entry *je = malloc(sizeof(struct join_entry));
     je->thread = pthread_self();
     je->tid = syscall(SYS_gettid);
     SLIST_INSERT_HEAD(&join_head, je, entries);
@@ -204,7 +210,8 @@ int main(int argc, char *argv[])
         tv.tv_usec = 250000;
         int sig = select(lsd+1, &rdfs, NULL, NULL, &tv);
         if (sig < 0) {
-            fprintf(stderr, "%s\n", strerror(errno));
+            if (errno != EINTR)
+                fprintf(stderr, "%s\n", strerror(errno));
             break;
         } else if (sig == 0) {
             //timeout reached, allows us to exit on demand
@@ -217,14 +224,17 @@ int main(int argc, char *argv[])
             fprintf(stderr, "Failed to accept client socket: %s\n", strerror(errno));
             continue;
         }
-        //make our client socket non blocking for the initial send
-        //int flags = fcntl(csd, F_GETFL, 0);
-        //fcntl(csd, F_GETFL, flags & ~O_NONBLOCK);
+        //Make our client socket non blocking for the initial send. We don't
+        //ever want to block the listen thread, so if a client connects and
+        //doesn't respond correctly right away just drop it and wait for a new
+        //one.
+        int flags = fcntl(csd, F_GETFL, 0);
+        fcntl(csd, F_GETFL, flags & ~O_NONBLOCK);
 
         //Send our identity first
         send(csd, &identity, 4, 0);
 
-        //read byte identifier from socket
+        //Read byte identifier from socket
         uint32_t response;
         recv(csd, &response, 4, 0);
         if (response != sender && response != receiver) {
@@ -233,13 +243,13 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        //read sha hash
+        //Read sha hash
         char buffer[SHA_DIGEST_LENGTH*2+1];
         recv(csd, buffer, SHA_DIGEST_LENGTH*2, 0);
         buffer[SHA_DIGEST_LENGTH*2+1] = '\0';
 
-        //allow blocking again
-        //fcntl(csd, F_GETFL, flags | O_NONBLOCK);
+        //Set the client socket to allow blocking again (in it's own thread)
+        fcntl(csd, F_GETFL, flags | O_NONBLOCK);
 
         if (response == sender)
             printf("got sender with hash %s\n", buffer);
@@ -288,5 +298,8 @@ int main(int argc, char *argv[])
     twalk(troot, close_unmatched_connections);
     tdestroy(troot, free);
 
+    join_finished_threads();
+
+    shutdown(lsd, SHUT_RDWR);
     close(lsd);
 }
