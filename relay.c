@@ -50,6 +50,16 @@ struct transfer_info {
     pthread_attr_t tattr;
 };
 
+static void transfer_info_free(struct transfer_info *tr)
+{
+    if (!tr)
+        return;
+    if (tr->hash)
+        free(tr->hash);
+    if (tr->filename)
+        free(tr->filename);
+}
+
 static int compare(const void *a, const void *b)
 {
     struct transfer_info *ta = (struct transfer_info *)a;
@@ -129,12 +139,12 @@ void *relay_data(void *opaque)
         return NULL;
     }
 
-    printf("thread started\n");
+    pid_t tid = syscall(SYS_gettid);
+    printf("thread %d started\n", tid);
 
-    printf("sending filename %s to receiver with len %d\n", pair->filename, pair->flen);
     uint16_t fsize = htons(pair->flen);
-    send(pair->outfd, &fsize, 2, 0);
-    send(pair->outfd, pair->filename, pair->flen, 0);
+    send(pair->outfd, &fsize, 2, MSG_NOSIGNAL);
+    send(pair->outfd, pair->filename, pair->flen, MSG_NOSIGNAL);
 
 #ifdef USE_SPLICE
     copy_using_splice(pair->infd, pair->outfd);
@@ -156,11 +166,11 @@ void *relay_data(void *opaque)
     pthread_mutex_lock(&join_lock);
     struct join_entry *je = malloc(sizeof(struct join_entry));
     je->thread = pthread_self();
-    je->tid = syscall(SYS_gettid);
+    je->tid = tid;
     SLIST_INSERT_HEAD(&join_head, je, entries);
     pthread_mutex_unlock(&join_lock);
 
-    printf("thread exiting\n");
+    printf("thread %d exiting\n", tid);
 
     return NULL;
 }
@@ -239,11 +249,11 @@ int main(int argc, char *argv[])
         //ever want to block the listen thread, so if a client connects and
         //doesn't respond correctly right away just drop it and wait for a new
         //one.
-        int flags = fcntl(csd, F_GETFL, 0);
-        fcntl(csd, F_GETFL, flags & ~O_NONBLOCK);
+        //int flags = fcntl(csd, F_GETFL, 0);
+        //fcntl(csd, F_GETFL, flags & ~O_NONBLOCK);
 
         //Send our identity first
-        send(csd, &identity, 4, 0);
+        send(csd, &identity, 4, MSG_NOSIGNAL);
 
         //Read byte identifier from socket
         uint32_t response;
@@ -274,20 +284,16 @@ int main(int argc, char *argv[])
                 continue;
             }
             filebuf[len] = '\0';
-            printf("read filename from sender with len %d: %s\n", len, filebuf);
         }
         else if (response == receiver) {
             printf("got receiver with hash %s\n", shabuf);
         }
 
         //Set the client socket to allow blocking again (in it's own thread)
-        fcntl(csd, F_GETFL, flags | O_NONBLOCK);
+        //fcntl(csd, F_GETFL, flags | O_NONBLOCK);
 
         memset(&tr, 0, sizeof(struct transfer_info));
         tr.hash = shabuf;
-        //tr.filename = filebuf;
-        //tr.flen = fsize;
-        //tr.infd = csd;
 
         //if got sha hash, check search tree
         void **obj = tfind((void *)&tr, &troot, compare);
@@ -303,7 +309,6 @@ int main(int argc, char *argv[])
                 close(csd);
                 continue;
             }
-            printf("starting thread for receiver: flen %d filename %s\n", match->flen, match->filename);
             match->outfd = csd;
             //spawn new thread
             pthread_attr_init(&match->tattr);
@@ -317,10 +322,12 @@ int main(int argc, char *argv[])
             ntr->flen = fsize;
             ntr->infd = csd;
             ntr->outfd = -1;
-            printf("adding new pair with flen %d filename %s\n", ntr->flen, ntr->filename);
             obj = tsearch((void *)ntr, &troot, compare);
             if (!obj) {
                 fprintf(stderr, "Insufficient memory to add hash to binary search tree\n");
+                free(ntr->hash);
+                free(ntr->filename);
+                free(ntr);
                 close(csd);
                 continue;
             }

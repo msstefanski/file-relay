@@ -40,34 +40,32 @@ function run_tests {
     mkdir -p "$testdir"/in "$testdir"/out
     passed=1
 
-    ./relay :$port &# > "$testdir"/relay.log 2>&1 &
+    ./relay :$port > "$testdir"/relay.log 2>&1 &
 
-    #generate sample data from 100 bytes to 10MB
     echo "Generating test data..."
     y=0
-    for x in $(seq 100 5000 100000); do
+    for x in $(seq 100 250 125000); do
         y=$(( y + 1 ))
+        echo " test_$y.dat with size $x"
         dd count=$x if=/dev/urandom of="$testdir"/in/test_$y.dat > /dev/null 2>&1
     done
+    testcount=$y
 
     #run all the sends
     echo "Running all sends..."
-    y=0
-    for x in $(seq 100 5000 100000); do
-        y=$(( y + 1 ))
+    rm -f "$testdir"/secrets.txt
+    for y in $(seq 1 $testcount); do
         ./send localhost:$port "$testdir"/in/test_$y.dat >> "$testdir"/secrets.txt &
-        sleep 1
     done
+    sleep 10
     #wait for secrets to be available
-    while [[ $(wc -l "$testdir"/secrets.txt | cut -d" " -f1) -lt 20 ]]; do
+    while [[ $(wc -l "$testdir"/secrets.txt | cut -d" " -f1) -lt $testcount ]]; do
         sleep 1
     done
     #run all the receives
     echo "Running all receives..."
-    y=0
     for secret in $(cat "$testdir"/secrets.txt); do
-        y=$(( y + 1 ))
-        ./receive localhost:$port $secret "$testdir"/out &
+        ./receive localhost:$port "$secret" "$testdir"/out &
     done
 
     while true; do
@@ -77,17 +75,17 @@ function run_tests {
             break
         fi
         echo "Waiting for sends/receives..."
-        sleep 1
+        sleep 5
     done
 
     #verify the results
     echo "Verifying all data transferred correctly..."
-    y=0
-    for x in $(seq 100 5000 100000); do
-        y=$(( y + 1 ))
+    for y in $(seq 1 $testcount); do
         insum=$(md5sum "$testdir"/in/test_$y.dat | awk '{print $1}')
         outsum=$(md5sum "$testdir"/out/test_$y.dat | awk '{print $1}')
-        if [[ "$insum" != "$outsum" ]]; then
+        if [[ "$insum" == "$outsum" ]]; then
+            echo -e "Copy passed: $y"
+        else
             echo -e "${red}Copy failed: $y${reset}"
             passed=0
         fi

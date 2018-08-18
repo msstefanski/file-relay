@@ -42,9 +42,6 @@ int main(int argc, char *argv[0])
     //sha1 hash the secret
     char *hash = make_hash(secret);
 
-    //------------------------------------------------------------------------
-    //copy paste from send.c
-    //------------------------------------------------------------------------
     //Get the IP of the host if a hostname was provided
     struct hostent *he;
     he = gethostbyname(host);
@@ -100,21 +97,19 @@ int main(int argc, char *argv[0])
         goto cleanup_exit;
     }
     filename[len] = '\0';
-    printf("read filename from relay with len %d: %s\n", len, filename);
     char fullfile[PATH_MAX];
     snprintf(fullfile, PATH_MAX, "%s/%s", outdir, filename);
 
-    //------------------------------------------------------------------------
     //recv data from socket, decrypt data using secret, write to file
-    char cpbuf[8192];
     int fd = open(fullfile, O_CREAT | O_WRONLY, 0644);
     if (fd < 0) {
         fprintf(stderr, "Failed to open %s: %s\n", fullfile, strerror(errno));
         goto cleanup_exit;
     }
 
+    char cpbuf[8192];
     while (1) {
-        ssize_t rres = read(sd, &cpbuf[0], 8192);
+        ssize_t rres = recv(sd, &cpbuf[0], 8192, 0);
         if (rres < 0) {
             if (errno == EAGAIN) {
                 fprintf(stderr, "EAGAIN\n");
