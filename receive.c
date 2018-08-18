@@ -78,10 +78,18 @@ int main(int argc, char *argv[0])
     }
 
     //Identify us to the relay server as a sender
-    send(sd, &identity, 4, 0);
+    if (send(sd, &identity, 4, 0) != 4) {
+        fprintf(stderr, "Failed to send identity to relay\n");
+        close(sd);
+        exit(1);
+    }
 
     //Send the secret code hash to pair us with a receiver
-    send(sd, hash, SHA_DIGEST_LENGTH*2, 0);
+    if (send(sd, hash, SHA_DIGEST_LENGTH*2, 0) != SHA_DIGEST_LENGTH*2) {
+        fprintf(stderr, "Failed to send hash to relay\n");
+        close(sd);
+        exit(1);
+    }
 
     //Receive the filename from the server
     char filename[PATH_MAX];
@@ -100,36 +108,43 @@ int main(int argc, char *argv[0])
     char fullfile[PATH_MAX];
     snprintf(fullfile, PATH_MAX, "%s/%s", outdir, filename);
 
-    //recv data from socket, decrypt data using secret, write to file
+    //Set socket to non-blocking
+    //int flags = fcntl(sd, F_GETFL, 0);
+    //fcntl(sd, F_GETFL, flags & ~O_NONBLOCK);
+
+    //Open the output file to write to
     int fd = open(fullfile, O_CREAT | O_WRONLY, 0644);
     if (fd < 0) {
         fprintf(stderr, "Failed to open %s: %s\n", fullfile, strerror(errno));
         goto cleanup_exit;
     }
 
+    //recv data from socket
     char cpbuf[8192];
     while (1) {
-        ssize_t rres = recv(sd, &cpbuf[0], 8192, 0);
+        ssize_t rres = recv(sd, cpbuf, 8192, 0);
         if (rres < 0) {
-            if (errno == EAGAIN) {
-                fprintf(stderr, "EAGAIN\n");
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 continue;
             } else {
-                fprintf(stderr, "fail: %s\n", strerror(errno));
+                fprintf(stderr, "Fail: %s\n", strerror(errno));
                 break;
             }
         } else if (rres == 0) {
             break;
         }
-        ssize_t wres = write(fd, &cpbuf[0], rres);
-        if (wres != rres) {
-            fprintf(stderr, "failed to copy data\n");
+        ssize_t wres = write(fd, cpbuf, rres);
+        if (wres == 0) {
+            fprintf(stderr, "Failed to write data\n");
+            break;
+        } else if (wres != rres) {
+            fprintf(stderr, "Failed to copy data\n");
             break;
         }
     }
 
-cleanup_exit:
     close(fd);
+cleanup_exit:
     close(sd);
 
     free(hash);

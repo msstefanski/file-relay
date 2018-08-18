@@ -43,7 +43,7 @@ void interrupt(int sig)
 struct transfer_info {
     char *hash;
     char *filename;
-    uint16_t flen;
+    uint16_t fnlen;
     int infd;
     int outfd;
     pthread_t tid;
@@ -82,10 +82,8 @@ static void close_unmatched_connections(const void *nodep, const VISIT which, co
         t = (struct transfer_info *)nodep;
         close(t->infd);
         close(t->outfd);
-        if (t->hash)
-            free(t->hash);
-        if (t->filename)
-            free(t->filename);
+        transfer_info_free(t);
+        free(t);
         break;
     }
 }
@@ -109,14 +107,14 @@ static int copy_using_splice(int in, int out)
 {
     int p[2];
     pipe(p);
-    while (splice(p[0], 0, out, 0, splice(in, 0, p[1], 0, 8192, 0), 0) > 0);
+    while (splice(p[0], 0, out, 0, splice(in, 0, p[1], 0, 8192, 0), 0) > 0 && !stop);
 }
 
 static size_t copy_using_read_write_loop(int in, int out)
 {
     size_t bytes_copied = 0;
     char cpbuf[8192];
-    while (1) {
+    while (!stop) {
         ssize_t rres = read(in, &cpbuf[0], 8192);
         if (!rres)
             break;
@@ -134,17 +132,20 @@ void *relay_data(void *opaque)
 {
     struct transfer_info *pair = (struct transfer_info *)opaque;
 
+    if (!pair)
+        return NULL;
+
     if (pair->infd < 0 || pair->outfd < 0 || !pair->hash || !pair->filename) {
         fprintf(stderr, "Transfer info invalid\n");
-        return NULL;
+        goto cleanup;
     }
 
     pid_t tid = syscall(SYS_gettid);
     printf("thread %d started\n", tid);
 
-    uint16_t fsize = htons(pair->flen);
+    uint16_t fsize = htons(pair->fnlen);
     send(pair->outfd, &fsize, 2, MSG_NOSIGNAL);
-    send(pair->outfd, pair->filename, pair->flen, MSG_NOSIGNAL);
+    send(pair->outfd, pair->filename, pair->fnlen, MSG_NOSIGNAL);
 
 #ifdef USE_SPLICE
     copy_using_splice(pair->infd, pair->outfd);
@@ -152,6 +153,7 @@ void *relay_data(void *opaque)
     copy_using_read_write_loop(pair->infd, pair->outfd);
 #endif
 
+cleanup:
     close(pair->infd);
     close(pair->outfd);
     transfer_info_free(pair);
@@ -248,8 +250,8 @@ int main(int argc, char *argv[])
         //ever want to block the listen thread, so if a client connects and
         //doesn't respond correctly right away just drop it and wait for a new
         //one.
-        int flags = fcntl(csd, F_GETFL, 0);
-        fcntl(csd, F_GETFL, flags & ~O_NONBLOCK);
+        //int flags = fcntl(csd, F_GETFL, 0);
+        //fcntl(csd, F_GETFL, flags & ~O_NONBLOCK);
 
         //Send our identity first
         send(csd, &identity, 4, MSG_NOSIGNAL);
@@ -289,7 +291,7 @@ int main(int argc, char *argv[])
         }
 
         //Set the client socket to allow blocking again (in it's own thread)
-        fcntl(csd, F_GETFL, flags | O_NONBLOCK);
+        //fcntl(csd, F_GETFL, flags | O_NONBLOCK);
 
         memset(&tr, 0, sizeof(struct transfer_info));
         tr.hash = shabuf;
@@ -313,12 +315,17 @@ int main(int argc, char *argv[])
             pthread_attr_init(&match->tattr);
             pthread_attr_setstacksize(&match->tattr, 2048);
             pthread_create(&match->tid, &match->tattr, relay_data, (void *)match);
+            //set the thread name so we can identify it easier
+            static char thread_name[16];
+            snprintf(thread_name, 16, "tfd-%d:%d", match->infd, match->outfd);
+            thread_name[15] = '\0';
+            pthread_setname_np(match->tid, thread_name);
         } else {
             //not found, this should be the sender
             struct transfer_info *ntr = calloc(1, sizeof(struct transfer_info));
             ntr->hash = strdup(shabuf);
             ntr->filename = strdup(filebuf);
-            ntr->flen = fsize;
+            ntr->fnlen = fsize;
             ntr->infd = csd;
             ntr->outfd = -1;
             obj = tsearch((void *)ntr, &troot, compare);

@@ -10,8 +10,8 @@ else
     echo "using port $port"
 fi
 
+generate_test_data=1
 testdir=./testdir
-
 red='\033[0;31m'
 green='\033[0;32m'
 reset='\x1b[0m'
@@ -36,20 +36,28 @@ trap 'cleanup_exit' EXIT
 
 function run_tests {
     set -e
-    rm -rf "$testdir"
+    if [[ $generate_test_data -gt 0 ]]; then
+        rm -rf "$testdir"
+    else
+        rm -rf "$testdir"/out
+    fi
     mkdir -p "$testdir"/in "$testdir"/out
     passed=1
 
     ./relay :$port > "$testdir"/relay.log 2>&1 &
 
-    echo "Generating test data..."
-    y=0
-    for x in $(seq 100 250 125000); do
-        y=$(( y + 1 ))
-        echo " test_$y.dat with size $x"
-        dd count=$x if=/dev/urandom of="$testdir"/in/test_$y.dat > /dev/null 2>&1
-    done
-    testcount=$y
+    if [[ $generate_test_data -gt 0 ]]; then
+        echo "Generating test data..."
+        y=0
+        for x in $(seq 100 250 125000); do
+            y=$(( y + 1 ))
+            echo " test_$y.dat with size $x"
+            dd count=$x if=/dev/urandom of="$testdir"/in/test_$y.dat > /dev/null 2>&1
+        done
+        testcount=$y
+    else
+        testcount=$(ls -l "$testdir/in" | sed 1d | wc -l)
+    fi
 
     #run all the sends
     echo "Running all sends..."
@@ -74,7 +82,7 @@ function run_tests {
         if [[ $sends -eq 0 && $recvs -eq 0 ]]; then
             break
         fi
-        echo "Waiting for sends/receives..."
+        echo "Waiting for sends/receives to finish..."
         sleep 5
     done
 

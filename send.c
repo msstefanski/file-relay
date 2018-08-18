@@ -55,7 +55,6 @@ int main(int argc, char *argv[0])
 
     //Hash the secret so we never transmit the secret itself
     char *hash = make_hash(secret);
-    //fprintf(stderr, "%s\n", hash);
 
     //Get the IP of the host if a hostname was provided
     struct hostent *he;
@@ -79,7 +78,7 @@ int main(int argc, char *argv[0])
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     if (connect(sd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        fprintf(stderr, "Failed to connect to server\n");
+        fprintf(stderr, "Failed to connect to relay\n");
         exit(1);
     }
 
@@ -93,16 +92,37 @@ int main(int argc, char *argv[0])
     }
 
     //Identify us to the relay server as a sender
-    send(sd, &identity, 4, 0);
+    if (send(sd, &identity, 4, 0) != 4) {
+        fprintf(stderr, "Failed to send identifier to relay\n");
+        close(sd);
+        exit(1);
+    }
 
     //Send the secret code hash to pair us with a receiver
-    send(sd, hash, SHA_DIGEST_LENGTH*2, 0);
+    if (send(sd, hash, SHA_DIGEST_LENGTH*2, 0) != SHA_DIGEST_LENGTH*2) {
+        fprintf(stderr, "Failed to send hash to relay\n");
+        close(sd);
+        exit(1);
+    }
 
     //Send the filename
     char *base = basename(filename);
-    uint16_t fsize = htons(strlen(base) + 1);
-    send(sd, &fsize, 2, 0);
-    send(sd, base, strlen(base) + 1, 0);
+    uint16_t len = strlen(base) + 1;
+    uint16_t fsize = htons(len);
+    if (send(sd, &fsize, 2, 0) != 2) {
+        fprintf(stderr, "Failed to send size to relay\n");
+        close(sd);
+        exit(1);
+    }
+    if (send(sd, base, len, 0) != len) {
+        fprintf(stderr, "Failed to send filename to relay\n");
+        close(sd);
+        exit(1);
+    }
+
+    //Set socket to non-blocking
+    //int flags = fcntl(sd, F_GETFL, 0);
+    //fcntl(sd, F_GETFL, flags & ~O_NONBLOCK);
 
     //Read file, encrypt data using secret, send encrypted data to socket
     char cpbuf[8192];
@@ -113,27 +133,30 @@ int main(int argc, char *argv[0])
     }
 
     while (1) {
-        ssize_t rres = read(fd, &cpbuf[0], 8192);
+        ssize_t rres = read(fd, cpbuf, 8192);
         if (rres < 0) {
             if (errno == EAGAIN) {
                 fprintf(stderr, "EAGAIN\n");
                 continue;
             } else {
-                fprintf(stderr, "fail: %s\n", strerror(errno));
+                fprintf(stderr, "Fail: %s\n", strerror(errno));
                 break;
             }
         } else if (rres == 0) {
             break;
         }
-        ssize_t wres = send(sd, &cpbuf[0], rres, 0);
-        if (wres != rres) {
-            fprintf(stderr, "failed to copy data\n");
+        ssize_t wres = send(sd, cpbuf, rres, 0);
+        if (wres == 0) {
+            fprintf(stderr, "Failed to send data\n");
+            break;
+        } else if (wres != rres) {
+            fprintf(stderr, "Failed to copy data\n");
             break;
         }
     }
 
-cleanup_exit:
     close(fd);
+cleanup_exit:
     close(sd);
 
     free(filename);
