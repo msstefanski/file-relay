@@ -5,6 +5,7 @@
 #include <string.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <libgen.h>
 #include <openssl/sha.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -97,9 +98,13 @@ int main(int argc, char *argv[0])
     //Send the secret code hash to pair us with a receiver
     send(sd, hash, SHA_DIGEST_LENGTH*2, 0);
 
-    //wait for response from relay to start sending file
-    //read file, encrypt data using secret, send encrypted data to socket
+    //Send the filename
+    char *base = basename(filename);
+    uint16_t fsize = htons(strlen(base) + 1);
+    send(sd, &fsize, 2, 0);
+    send(sd, base, strlen(base) + 1, 0);
 
+    //Read file, encrypt data using secret, send encrypted data to socket
     char cpbuf[8192];
     int fd = open(filename, O_RDONLY);
     if (fd < 0) {

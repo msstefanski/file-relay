@@ -5,6 +5,7 @@
 #include <string.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <linux/limits.h>
 #include <openssl/sha.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -29,7 +30,7 @@ int main(int argc, char *argv[0])
     }
     char *address = argv[1];
     char *secret = argv[2];
-    char *output = argv[3];
+    char *outdir = argv[3];
     char *host = strtok(address, ":");
     char *portstr = strtok(NULL, ":");
     if (!host || !portstr) {
@@ -84,13 +85,31 @@ int main(int argc, char *argv[0])
 
     //Send the secret code hash to pair us with a receiver
     send(sd, hash, SHA_DIGEST_LENGTH*2, 0);
+
+    //Receive the filename from the server
+    char filename[PATH_MAX];
+    uint16_t fsize = 0;
+    recv(sd, &fsize, 2, 0);
+    fsize = ntohs(fsize);
+    ssize_t len = recv(sd, filename, fsize, 0);
+    if (len == 0) {
+        fprintf(stderr, "Read 0 from relay...\n");
+        goto cleanup_exit;
+    } else if (len != fsize) {
+        fprintf(stderr, "Failed to read filename from relay\n");
+        goto cleanup_exit;
+    }
+    filename[len] = '\0';
+    printf("read filename from relay with len %d: %s\n", len, filename);
+    char fullfile[PATH_MAX];
+    snprintf(fullfile, PATH_MAX, "%s/%s", outdir, filename);
+
     //------------------------------------------------------------------------
     //recv data from socket, decrypt data using secret, write to file
-
     char cpbuf[8192];
-    int fd = open(output, O_CREAT | O_WRONLY, 0644);
+    int fd = open(fullfile, O_CREAT | O_WRONLY, 0644);
     if (fd < 0) {
-        fprintf(stderr, "Failed to open %s: %s\n", output, strerror(errno));
+        fprintf(stderr, "Failed to open %s: %s\n", fullfile, strerror(errno));
         goto cleanup_exit;
     }
 

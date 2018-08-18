@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # increase soft file descriptor limit
-#ulimit -n 10032
+#ulimit -S 10032
 
 if [[ $# -gt 0 ]]; then
     port=$1
@@ -32,7 +32,6 @@ function cleanup_success {
     kill -2 $(pgrep relay)
 }
 
-#trap 'cleanup_failure' SIGTERM SIGINT SIGSEGV SIGABRT
 trap 'cleanup_exit' EXIT
 
 function run_tests {
@@ -48,7 +47,7 @@ function run_tests {
     y=0
     for x in $(seq 100 5000 100000); do
         y=$(( y + 1 ))
-        dd count=$x if=/dev/urandom of="$testdir"/in/in_$y.dat > /dev/null 2>&1
+        dd count=$x if=/dev/urandom of="$testdir"/in/test_$y.dat > /dev/null 2>&1
     done
 
     #run all the sends
@@ -56,7 +55,7 @@ function run_tests {
     y=0
     for x in $(seq 100 5000 100000); do
         y=$(( y + 1 ))
-        ./send localhost:$port "$testdir"/in/in_$y.dat >> "$testdir"/secrets.txt &
+        ./send localhost:$port "$testdir"/in/test_$y.dat >> "$testdir"/secrets.txt &
         sleep 1
     done
     #wait for secrets to be available
@@ -68,7 +67,7 @@ function run_tests {
     y=0
     for secret in $(cat "$testdir"/secrets.txt); do
         y=$(( y + 1 ))
-        ./receive localhost:$port $secret "$testdir"/out/out_$y.dat &
+        ./receive localhost:$port $secret "$testdir"/out &
     done
 
     while true; do
@@ -86,8 +85,8 @@ function run_tests {
     y=0
     for x in $(seq 100 5000 100000); do
         y=$(( y + 1 ))
-        insum=$(md5sum "$testdir"/in/in_$y.dat | awk '{print $1}')
-        outsum=$(md5sum "$testdir"/out/out_$y.dat | awk '{print $1}')
+        insum=$(md5sum "$testdir"/in/test_$y.dat | awk '{print $1}')
+        outsum=$(md5sum "$testdir"/out/test_$y.dat | awk '{print $1}')
         if [[ "$insum" != "$outsum" ]]; then
             echo -e "${red}Copy failed: $y${reset}"
             passed=0

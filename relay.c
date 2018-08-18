@@ -8,6 +8,7 @@
 #include <search.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <linux/limits.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -41,6 +42,8 @@ void interrupt(int sig)
 
 struct transfer_info {
     char *hash;
+    char *filename;
+    uint16_t flen;
     int infd;
     int outfd;
     pthread_t tid;
@@ -71,6 +74,8 @@ static void close_unmatched_connections(const void *nodep, const VISIT which, co
         close(t->outfd);
         if (t->hash)
             free(t->hash);
+        if (t->filename)
+            free(t->filename);
         break;
     }
 }
@@ -119,22 +124,28 @@ void *relay_data(void *opaque)
 {
     struct transfer_info *pair = (struct transfer_info *)opaque;
 
-    if (pair->infd < 0 || pair->outfd < 0 || !pair->hash) {
+    if (pair->infd < 0 || pair->outfd < 0 || !pair->hash || !pair->filename) {
         fprintf(stderr, "Transfer info invalid\n");
         return NULL;
     }
 
     printf("thread started\n");
-#if 1
+
+    printf("sending filename %s to receiver with len %d\n", pair->filename, pair->flen);
+    uint16_t fsize = htons(pair->flen);
+    send(pair->outfd, &fsize, 2, 0);
+    send(pair->outfd, pair->filename, pair->flen, 0);
+
+#ifdef USE_SPLICE
     copy_using_splice(pair->infd, pair->outfd);
 #else
-    size_t b = copy_using_read_write_loop(pair->infd, pair->outfd);
-    printf("copied %zu bytes\n", b);
+    copy_using_read_write_loop(pair->infd, pair->outfd);
 #endif
 
     close(pair->infd);
     close(pair->outfd);
     free(pair->hash);
+    free(pair->filename);
     free(pair);
 
     //before we exit, join other exited threads to free resources and prevent
@@ -244,21 +255,39 @@ int main(int argc, char *argv[])
         }
 
         //Read sha hash
-        char buffer[SHA_DIGEST_LENGTH*2+1];
-        recv(csd, buffer, SHA_DIGEST_LENGTH*2, 0);
-        buffer[SHA_DIGEST_LENGTH*2+1] = '\0';
+        static char shabuf[SHA_DIGEST_LENGTH*2+1];
+        recv(csd, shabuf, SHA_DIGEST_LENGTH*2, 0);
+        shabuf[SHA_DIGEST_LENGTH*2+1] = '\0';
+
+        static char filebuf[PATH_MAX];
+        static uint16_t fsize = 0;
+        if (response == sender) {
+            printf("got sender with hash %s\n", shabuf);
+
+            //Read incoming filename
+            recv(csd, &fsize, 2, 0);
+            fsize = ntohs(fsize);
+            ssize_t len = recv(csd, filebuf, fsize, 0);
+            if (len != fsize) {
+                fprintf(stderr, "Failed to read filename from sender\n");
+                close(csd);
+                continue;
+            }
+            filebuf[len] = '\0';
+            printf("read filename from sender with len %d: %s\n", len, filebuf);
+        }
+        else if (response == receiver) {
+            printf("got receiver with hash %s\n", shabuf);
+        }
 
         //Set the client socket to allow blocking again (in it's own thread)
         fcntl(csd, F_GETFL, flags | O_NONBLOCK);
 
-        if (response == sender)
-            printf("got sender with hash %s\n", buffer);
-        else if (response == receiver)
-            printf("got receiver with hash %s\n", buffer);
-
         memset(&tr, 0, sizeof(struct transfer_info));
-        tr.hash = buffer;
-        tr.infd = csd;
+        tr.hash = shabuf;
+        //tr.filename = filebuf;
+        //tr.flen = fsize;
+        //tr.infd = csd;
 
         //if got sha hash, check search tree
         void **obj = tfind((void *)&tr, &troot, compare);
@@ -269,12 +298,12 @@ int main(int argc, char *argv[])
                 fprintf(stderr, "No hash found. Failed to delete node\n");
                 continue;
             }
-            //TODO: move this to a thread list so we can join them on stop and free memory afterwards
             if (match->infd < 0) {
                 fprintf(stderr, "Found matching hash but it has a bad fd\n");
                 close(csd);
                 continue;
             }
+            printf("starting thread for receiver: flen %d filename %s\n", match->flen, match->filename);
             match->outfd = csd;
             //spawn new thread
             pthread_attr_init(&match->tattr);
@@ -283,8 +312,12 @@ int main(int argc, char *argv[])
         } else {
             //not found, this should be the sender
             struct transfer_info *ntr = calloc(1, sizeof(struct transfer_info));
-            ntr->hash = strdup(buffer);
+            ntr->hash = strdup(shabuf);
+            ntr->filename = strdup(filebuf);
+            ntr->flen = fsize;
             ntr->infd = csd;
+            ntr->outfd = -1;
+            printf("adding new pair with flen %d filename %s\n", ntr->flen, ntr->filename);
             obj = tsearch((void *)ntr, &troot, compare);
             if (!obj) {
                 fprintf(stderr, "Insufficient memory to add hash to binary search tree\n");
