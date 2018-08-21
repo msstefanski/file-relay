@@ -15,7 +15,7 @@ receive: receive.c secret.c
 relay: relay.c
 	gcc -o relay -g \
 	    -D_GNU_SOURCE \
-	    -DNO_USE_SPLICE \
+	    -DUSE_SPLICE \
 	    -DMAX_CONNECTIONS=10000 \
 	    relay.c \
 	    -lpthread \
