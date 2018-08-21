@@ -8,7 +8,7 @@ jobs:
       - run:
           name: Install libs
           command: |
-            apt-get install gcc
+            apt-get install -y gcc openssl libssl-dev pkg-config
       - run:
           name: Build
           command: make
