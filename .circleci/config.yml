@@ -3,15 +3,21 @@ jobs:
   build:
     docker:
       - image: debian:stretch
-        steps:
-          - checkout
-          - run:
-            name: Install libs
-            command: |
-              apt-get install gcc
-          - run:
-            name: Build
-            command: make
-          - run:
-            name: Tests
-            command: make test
+    steps:
+      - checkout
+      - run:
+          name: Install libs
+          command: |
+            apt-get install gcc
+      - run:
+          name: Build
+          command: make
+      - run:
+          name: Tests
+          command: make test
+
+workflows:
+  version: 2
+  all:
+    jobs:
+      - build
