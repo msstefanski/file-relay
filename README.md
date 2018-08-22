@@ -1,3 +1,5 @@
+[![CircleCI](https://circleci.com/gh/msstefanski/file-relay/tree/master.svg?style=svg)](https://circleci.com/gh/msstefanski/file-relay/tree/master)
+
 # Description
 
 # Usage
