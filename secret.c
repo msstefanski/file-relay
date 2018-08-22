@@ -1,5 +1,7 @@
+#include <unistd.h>
 #include <openssl/sha.h>
-#include <sys/random.h>
+#include <sys/syscall.h>
+#include <linux/random.h>
 #include "secret.h"
 
 char *make_secret(int num_words)
@@ -24,7 +26,7 @@ char *make_secret(int num_words)
     long size = ftell(f);
 
     unsigned int seed = 0;
-    getrandom(&seed, 4, 0);
+    syscall(SYS_getrandom, &seed, sizeof(unsigned int), 0);
     srandom(seed);
 
     for (int w = 0; w < num_words; ++w) {
