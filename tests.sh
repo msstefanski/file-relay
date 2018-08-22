@@ -14,7 +14,7 @@ generate_test_data=1
 testdir=./testdir
 maxseq=125000
 if [[ "$CI" == "true" ]]; then
-    maxseq=75000
+    maxseq=50000
 fi
 red='\033[0;31m'
 green='\033[0;32m'

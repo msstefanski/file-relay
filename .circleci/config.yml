@@ -9,7 +9,7 @@ jobs:
           name: Install libs
           command: |
             apt-get update
-            apt-get install -y gcc make openssl libssl-dev pkg-config wamerican
+            apt-get install -y gcc make openssl libssl-dev pkg-config wamerican procps
       - run:
           name: Build
           command: make
