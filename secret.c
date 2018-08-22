@@ -12,9 +12,9 @@ char *make_secret(int num_words)
     ssize_t line_read;
     ssize_t line_alloced;
 
-    FILE *f = fopen("/usr/share/dict/cracklib-small", "r");
+    FILE *f = fopen("/usr/share/dict/words", "r");
     if (!f) {
-        fprintf(stderr, "Failed to open /usr/share/dict/cracklib-small\n");
+        fprintf(stderr, "Failed to open /usr/share/dict/words\n");
         return NULL;
     }
 
