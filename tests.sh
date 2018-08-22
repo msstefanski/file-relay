@@ -12,9 +12,11 @@ fi
 
 generate_test_data=1
 testdir=./testdir
-maxseq=125000
+#Limit the amount of data generated for CI tests since this can take a very
+#long time and require a large amount of disk space.
+seqmax=125000
 if [[ "$CI" == "true" ]]; then
-    maxseq=50000
+    seqmax=50000
 fi
 red='\033[0;31m'
 green='\033[0;32m'
@@ -53,7 +55,7 @@ function run_tests {
     if [[ $generate_test_data -gt 0 ]]; then
         echo "Generating test data..."
         y=0
-        for x in $(seq 100 250 $maxseq); do
+        for x in $(seq 100 250 $seqmax); do
             y=$(( y + 1 ))
             echo " test_$y.dat with size $x"
             dd count=$x if=/dev/urandom of="$testdir"/in/test_$y.dat > /dev/null 2>&1

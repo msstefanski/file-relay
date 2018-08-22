@@ -124,14 +124,20 @@ int main(int argc, char *argv[0])
     //int flags = fcntl(sd, F_GETFL, 0);
     //fcntl(sd, F_GETFL, flags & ~O_NONBLOCK);
 
-    //Read file, encrypt data using secret, send encrypted data to socket
-    char cpbuf[8192];
+    //Open the input file
     int fd = open(filename, O_RDONLY);
     if (fd < 0) {
         fprintf(stderr, "Failed to open %s: %s\n", filename, strerror(errno));
         goto cleanup_exit;
     }
 
+    //Read and write a small amount (a kernel page size maybe) from the input
+    //file to the output socket.
+    //TODO: We can encrypt the data here with a simple algorithm based on the
+    //shared secret. For each byte, add the uchar value of subsequent
+    //characters in the secret, allowing overflow to wrap back around. The
+    //receiving end would "unwrap" bytes the same way.
+    char cpbuf[8192];
     while (1) {
         ssize_t rres = read(fd, cpbuf, 8192);
         if (rres < 0) {
