@@ -12,6 +12,10 @@ fi
 
 generate_test_data=1
 testdir=./testdir
+maxseq=125000
+if [[ "$CI" == "true" ]]; then
+    maxseq=75000
+fi
 red='\033[0;31m'
 green='\033[0;32m'
 reset='\x1b[0m'
@@ -49,7 +53,7 @@ function run_tests {
     if [[ $generate_test_data -gt 0 ]]; then
         echo "Generating test data..."
         y=0
-        for x in $(seq 100 250 125000); do
+        for x in $(seq 100 250 $maxseq); do
             y=$(( y + 1 ))
             echo " test_$y.dat with size $x"
             dd count=$x if=/dev/urandom of="$testdir"/in/test_$y.dat > /dev/null 2>&1
