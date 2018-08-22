@@ -146,8 +146,14 @@ void *relay_data(void *opaque)
     printf("thread %d started\n", tid);
 
     uint16_t fsize = htons(pair->fnlen);
-    send(pair->outfd, &fsize, 2, MSG_NOSIGNAL);
-    send(pair->outfd, pair->filename, pair->fnlen, MSG_NOSIGNAL);
+    if (send(pair->outfd, &fsize, 2, MSG_NOSIGNAL) != 2) {
+        fprintf(stderr, "Failed to send filename size to receiver\n");
+        goto cleanup;
+    }
+    if (send(pair->outfd, pair->filename, pair->fnlen, MSG_NOSIGNAL) != pair->fnlen) {
+        fprintf(stderr, "Failed to send filename to receiver\n");
+        goto cleanup;
+    }
 
 #ifdef USE_SPLICE
     copy_using_splice(pair->infd, pair->outfd);
@@ -256,20 +262,37 @@ int main(int argc, char *argv[])
         //fcntl(csd, F_GETFL, flags & ~O_NONBLOCK);
 
         //Send our identity first
-        send(csd, &identity, 4, MSG_NOSIGNAL);
+        if (send(csd, &identity, 4, MSG_NOSIGNAL) != 4) {
+            fprintf(stderr, "Failed to send identity to client\n");
+            shutdown(csd, SHUT_RDWR);
+            close(csd);
+            continue;
+        }
 
         //Read byte identifier from socket
         uint32_t response;
-        recv(csd, &response, 4, 0);
+        if (recv(csd, &response, 4, 0) != 4) {
+            fprintf(stderr, "Failed to receive response from client\n");
+            shutdown(csd, SHUT_RDWR);
+            close(csd);
+            continue;
+        }
+
         if (response != sender && response != receiver) {
             fprintf(stderr, "Client is not a valid sender or receiver\n");
+            shutdown(csd, SHUT_RDWR);
             close(csd);
             continue;
         }
 
         //Read sha hash
         static char shabuf[SHA_DIGEST_LENGTH*2+1];
-        recv(csd, shabuf, SHA_DIGEST_LENGTH*2, 0);
+        if (recv(csd, shabuf, SHA_DIGEST_LENGTH*2, 0) != SHA_DIGEST_LENGTH*2) {
+            fprintf(stderr, "Failed to receive hash from client\n");
+            shutdown(csd, SHUT_RDWR);
+            close(csd);
+            continue;
+        }
         shabuf[SHA_DIGEST_LENGTH*2+1] = '\0';
 
         static char filebuf[PATH_MAX];
@@ -278,7 +301,10 @@ int main(int argc, char *argv[])
             printf("got sender with hash %s\n", shabuf);
 
             //Read incoming filename
-            recv(csd, &fsize, 2, 0);
+            if (recv(csd, &fsize, 2, 0) != 2) {
+                fprintf(stderr, "Failed to read filename size from sender\n");
+                continue;
+            }
             fsize = ntohs(fsize);
             ssize_t len = recv(csd, filebuf, fsize, 0);
             if (len != fsize) {

@@ -36,6 +36,7 @@ int main(int argc, char *argv[0])
     char *portstr = strtok(NULL, ":");
     if (!host || !portstr) {
         fprintf(stderr, "Invalid host or port\n");
+        fflush(stderr);
         exit(1);
     }
     int port = strtol(portstr, NULL, 10);
@@ -45,6 +46,7 @@ int main(int argc, char *argv[0])
     struct stat file_info;
     if (stat(filename, &file_info)) {
         fprintf(stderr, "Failed to stat file\n");
+        fflush(stderr);
         exit(1);
     }
 
@@ -61,6 +63,7 @@ int main(int argc, char *argv[0])
     he = gethostbyname(host);
     if (!he) {
         fprintf(stderr, "Failed getting IP of %s\n", host);
+        fflush(stderr);
         exit(1);
     }
     struct in_addr **addr_list;
@@ -71,6 +74,7 @@ int main(int argc, char *argv[0])
     int sd = socket(AF_INET, SOCK_STREAM, 0);
     if (sd < 0) {
         fprintf(stderr, "Failed to create socket: %s\n", strerror(errno));
+        fflush(stderr);
         exit(1);
     }
     struct sockaddr_in addr;
@@ -79,14 +83,28 @@ int main(int argc, char *argv[0])
     addr.sin_port = htons(port);
     if (connect(sd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         fprintf(stderr, "Failed to connect to relay\n");
+        fflush(stderr);
         exit(1);
     }
 
     //Let server identify itself
     uint32_t response;
-    recv(sd, &response, 4, 0);
+    ssize_t r = recv(sd, &response, 4, 0);
+    if (r == 0) {
+        fprintf(stderr, "Read 0 from relay...\n");
+        fflush(stderr);
+        close(sd);
+        exit(1);
+    } else if (r != 4) {
+        fprintf(stderr, "Relay didn't respond\n");
+        fflush(stderr);
+        close(sd);
+        exit(1);
+    }
+
     if (response != relayid) {
         fprintf(stderr, "Server didn't respond correctly\n");
+        fflush(stderr);
         close(sd);
         exit(1);
     }
@@ -94,6 +112,7 @@ int main(int argc, char *argv[0])
     //Identify us to the relay server as a sender
     if (send(sd, &identity, 4, 0) != 4) {
         fprintf(stderr, "Failed to send identifier to relay\n");
+        fflush(stderr);
         close(sd);
         exit(1);
     }
@@ -101,6 +120,7 @@ int main(int argc, char *argv[0])
     //Send the secret code hash to pair us with a receiver
     if (send(sd, hash, SHA_DIGEST_LENGTH*2, 0) != SHA_DIGEST_LENGTH*2) {
         fprintf(stderr, "Failed to send hash to relay\n");
+        fflush(stderr);
         close(sd);
         exit(1);
     }
@@ -111,11 +131,13 @@ int main(int argc, char *argv[0])
     uint16_t fsize = htons(len);
     if (send(sd, &fsize, 2, 0) != 2) {
         fprintf(stderr, "Failed to send size to relay\n");
+        fflush(stderr);
         close(sd);
         exit(1);
     }
     if (send(sd, base, len, 0) != len) {
         fprintf(stderr, "Failed to send filename to relay\n");
+        fflush(stderr);
         close(sd);
         exit(1);
     }
@@ -129,17 +151,18 @@ int main(int argc, char *argv[0])
     int fd = open(filename, O_RDONLY);
     if (fd < 0) {
         fprintf(stderr, "Failed to open %s: %s\n", filename, strerror(errno));
+        fflush(stderr);
         goto cleanup_exit;
     }
 
     while (1) {
         ssize_t rres = read(fd, cpbuf, 8192);
         if (rres < 0) {
-            if (errno == EAGAIN) {
-                fprintf(stderr, "EAGAIN\n");
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 continue;
             } else {
                 fprintf(stderr, "Fail: %s\n", strerror(errno));
+                fflush(stderr);
                 break;
             }
         } else if (rres == 0) {
@@ -148,9 +171,11 @@ int main(int argc, char *argv[0])
         ssize_t wres = send(sd, cpbuf, rres, 0);
         if (wres == 0) {
             fprintf(stderr, "Failed to send data\n");
+            fflush(stderr);
             break;
         } else if (wres != rres) {
             fprintf(stderr, "Failed to copy data\n");
+            fflush(stderr);
             break;
         }
     }

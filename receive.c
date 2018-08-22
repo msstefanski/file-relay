@@ -70,9 +70,19 @@ int main(int argc, char *argv[0])
 
     //Let server identify itself
     uint32_t response;
-    recv(sd, &response, 4, 0);
+    ssize_t len = recv(sd, &response, 4, 0);
+    if (len == 0) {
+        fprintf(stderr, "Read 0 from relay...\n");
+        close(sd);
+        exit(1);
+    } else if (len != 4) {
+        fprintf(stderr, "Relay didn't respond\n");
+        close(sd);
+        exit(1);
+    }
+
     if (response != relayid) {
-        fprintf(stderr, "Server didn't respond correctly\n");
+        fprintf(stderr, "Relay didn't respond correctly\n");
         close(sd);
         exit(1);
     }
@@ -94,9 +104,13 @@ int main(int argc, char *argv[0])
     //Receive the filename from the server
     char filename[PATH_MAX];
     uint16_t fsize = 0;
-    recv(sd, &fsize, 2, 0);
+    if (recv(sd, &fsize, 2, 0) != 2) {
+        fprintf(stderr, "Failed to read filename size from relay\n");
+        close(sd);
+        exit(1);
+    }
     fsize = ntohs(fsize);
-    ssize_t len = recv(sd, filename, fsize, 0);
+    len = recv(sd, filename, fsize, 0);
     if (len == 0) {
         fprintf(stderr, "Read 0 from relay...\n");
         goto cleanup_exit;
