@@ -107,8 +107,22 @@ static void join_finished_threads()
 static int copy_using_splice(int in, int out)
 {
     int p[2];
-    pipe(p);
-    while (splice(p[0], 0, out, 0, splice(in, 0, p[1], 0, 8192, 0), 0) > 0 && !stop);
+    if (pipe(p) < 0) {
+        perror("Failed to create pipe!");
+        return -1;
+    }
+    ssize_t s = 0;
+    do {
+        s = splice(p[0],
+                   0,
+                   out,
+                   0,
+                   splice(in, 0, p[1], 0, 8192, SPLICE_F_MORE),
+                   SPLICE_F_MORE);
+        if (s < 0) {
+            perror("Splice failed");
+        }
+    } while (s > 0 && !stop);
     close(p[0]);
     close(p[1]);
 }

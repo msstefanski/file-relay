@@ -30,7 +30,9 @@ function cleanup_exit {
 
 function cleanup_failure {
     echo -e "${red}Tests failed!${reset}"
-    kill -9 $(pgrep relay)
+    if pgrep relay ; then
+        kill -9 $(pgrep relay)
+    fi
 }
 
 function cleanup_success {
@@ -45,7 +47,7 @@ function run_tests {
     if [[ $generate_test_data -gt 0 ]]; then
         rm -rf "$testdir"
     else
-        rm -rf "$testdir"/out
+        rm -rf "$testdir"/out "$testdir"/{secrets.txt,relay.log}
     fi
     mkdir -p "$testdir"/in "$testdir"/out
     passed=1
@@ -67,7 +69,6 @@ function run_tests {
 
     #run all the sends
     echo "Running all sends..."
-    rm -f "$testdir"/secrets.txt
     for y in $(seq 1 $testcount); do
         ./send localhost:$port "$testdir"/in/test_$y.dat >> "$testdir"/secrets.txt &
     done

@@ -103,6 +103,6 @@ performance with the many socket file descriptors being managed by the relay.
 
 * Linux of any flavor (Linux-specific features used for performance and quality
   of life)
-* OpenSSSL (for SHA used in hashing the secret sent to the relay)
+* OpenSSL (for SHA used in hashing the secret sent to the relay)
 * See .circleci/config.yml for the list of Debian packages required to build
   and run tests

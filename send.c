@@ -120,10 +120,6 @@ int main(int argc, char *argv[0])
         exit(1);
     }
 
-    //Set socket to non-blocking
-    //int flags = fcntl(sd, F_GETFL, 0);
-    //fcntl(sd, F_GETFL, flags & ~O_NONBLOCK);
-
     //Open the input file
     int fd = open(filename, O_RDONLY);
     if (fd < 0) {
@@ -151,14 +147,18 @@ int main(int argc, char *argv[0])
         } else if (rres == 0) {
             break;
         }
-        ssize_t wres = send(sd, cpbuf, rres, 0);
-        if (wres == 0) {
-            fprintf(stderr, "Failed to send data\n");
-            break;
-        } else if (wres != rres) {
-            fprintf(stderr, "Failed to copy data\n");
-            break;
-        }
+        ssize_t wres;
+        ssize_t bw = 0;
+        do {
+            ssize_t wres = send(sd, &cpbuf[bw], rres-bw, 0);
+            if (wres < 0) {
+                perror("Failed to send data");
+                break;
+            } else if (wres == 0) {
+                fprintf(stderr, "Sent nothing...\n");
+            }
+            bw += wres;
+        } while (bw < rres);
     }
 
     close(fd);

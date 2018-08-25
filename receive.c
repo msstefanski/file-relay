@@ -108,10 +108,6 @@ int main(int argc, char *argv[0])
     char fullfile[PATH_MAX];
     snprintf(fullfile, PATH_MAX, "%s/%s", outdir, filename);
 
-    //Set socket to non-blocking
-    //int flags = fcntl(sd, F_GETFL, 0);
-    //fcntl(sd, F_GETFL, flags & ~O_NONBLOCK);
-
     //Open the output file to write to
     int fd = open(fullfile, O_CREAT | O_WRONLY, 0644);
     if (fd < 0) {
@@ -133,14 +129,18 @@ int main(int argc, char *argv[0])
         } else if (rres == 0) {
             break;
         }
-        ssize_t wres = write(fd, cpbuf, rres);
-        if (wres == 0) {
-            fprintf(stderr, "Failed to write data\n");
-            break;
-        } else if (wres != rres) {
-            fprintf(stderr, "Failed to copy data\n");
-            break;
-        }
+        ssize_t wres;
+        ssize_t bw = 0;
+        do {
+            wres = write(fd, &cpbuf[bw], rres-bw);
+            if (wres < 0) {
+                perror("Failed to write data");
+                break;
+            } else if (wres == 0) {
+                fprintf(stderr, "Wrote nothing to file...\n");
+            }
+            bw += wres;
+        } while (bw < rres);
     }
 
     close(fd);
