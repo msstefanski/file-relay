@@ -11,7 +11,7 @@
 #include <linux/limits.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
-#include <sys/select.h>
+#include <sys/epoll.h>
 #include <sys/syscall.h>
 #include <openssl/sha.h>
 
@@ -27,6 +27,7 @@ struct join_entry {
     SLIST_ENTRY(join_entry) entries;
 };
 static pthread_mutex_t join_lock = PTHREAD_MUTEX_INITIALIZER;
+static void *troot = NULL;
 
 
 void help()
@@ -122,7 +123,7 @@ static size_t copy_using_read_write_loop(int in, int out)
             break;
         ssize_t wres = write(out, &cpbuf[0], rres);
         if (wres != rres) {
-            fprintf(stderr, "failed to copy data\n");
+            fprintf(stderr, "Failed to copy data\n");
             break;
         }
         bytes_copied += wres;
@@ -178,6 +179,96 @@ cleanup:
     return NULL;
 }
 
+void handle_client_socket(int csd)
+{
+    printf("Accepted client on fd %d\n", csd);
+
+    //Read byte identifier from socket
+    uint32_t response;
+    recv(csd, &response, 4, 0);
+    if (response != sender && response != receiver) {
+        fprintf(stderr, "Client is not a valid sender or receiver\n");
+        close(csd);
+        return;
+    }
+
+    //Read sha hash
+    static char shabuf[SHA_DIGEST_LENGTH*2+1];
+    recv(csd, shabuf, SHA_DIGEST_LENGTH*2, 0);
+    shabuf[SHA_DIGEST_LENGTH*2+1] = '\0';
+
+    static char filebuf[PATH_MAX];
+    static uint16_t fsize = 0;
+    if (response == sender) {
+        printf("got sender with hash %s\n", shabuf);
+
+        //Read incoming filename
+        recv(csd, &fsize, 2, 0);
+        fsize = ntohs(fsize);
+        ssize_t len = recv(csd, filebuf, fsize, 0);
+        if (len != fsize) {
+            fprintf(stderr, "Failed to read filename from sender\n");
+            close(csd);
+            return;
+        }
+        filebuf[len] = '\0';
+    }
+    else if (response == receiver) {
+        printf("got receiver with hash %s\n", shabuf);
+    }
+
+    //Set the client socket to allow blocking again (in it's own thread)
+    int flags = fcntl(csd, F_GETFL, 0);
+    fcntl(csd, F_GETFL, flags | O_NONBLOCK);
+
+    static struct transfer_info tr;
+    memset(&tr, 0, sizeof(struct transfer_info));
+    tr.hash = shabuf;
+
+    //if got sha hash, check search tree
+    void **obj = tfind((void *)&tr, &troot, compare);
+    if (obj) {
+        //match found, this should be the receiver
+        struct transfer_info *match = (struct transfer_info *)*obj;
+        if (!tdelete(*obj, &troot, compare)) {
+            fprintf(stderr, "No hash found. Failed to delete node\n");
+            close(csd);
+            return;
+        }
+        if (match->infd < 0) {
+            fprintf(stderr, "Found matching hash but it has a bad fd\n");
+            close(csd);
+            return;
+        }
+        match->outfd = csd;
+        //spawn new thread
+        pthread_attr_init(&match->tattr);
+        pthread_attr_setstacksize(&match->tattr, 2048);
+        pthread_create(&match->tid, &match->tattr, relay_data, (void *)match);
+        //set the thread name so we can identify it easier
+        static char thread_name[16];
+        snprintf(thread_name, 16, "tfd-%d:%d", match->infd, match->outfd);
+        thread_name[15] = '\0';
+        pthread_setname_np(match->tid, thread_name);
+    } else {
+        //not found, this should be the sender
+        struct transfer_info *ntr = calloc(1, sizeof(struct transfer_info));
+        ntr->hash = strdup(shabuf);
+        ntr->filename = strdup(filebuf);
+        ntr->fnlen = fsize;
+        ntr->infd = csd;
+        ntr->outfd = -1;
+        obj = tsearch((void *)ntr, &troot, compare);
+        if (!obj) {
+            fprintf(stderr, "Insufficient memory to add hash to binary search tree\n");
+            transfer_info_free(ntr);
+            free(ntr);
+            close(csd);
+            return;
+        }
+    }
+}
+
 int main(int argc, char *argv[])
 {
     signal(SIGINT, interrupt);
@@ -219,124 +310,73 @@ int main(int argc, char *argv[])
     }
     if (listen(lsd, MAX_CONNECTIONS) < 0) {
         fprintf(stderr, "Failed to listen on socket: %s\n", strerror(errno));
+        close(lsd);
         exit(1);
     }
 
     //Accept and handle client connections
-    fd_set rdfs;
-    struct timeval tv;
-    void *troot = NULL;
-    struct transfer_info tr;
+    struct epoll_event ev, events[MAX_CONNECTIONS];
+    int epollfd = epoll_create1(0);
+    if (epollfd < 0) {
+        fprintf(stderr, "Failed to create epollfd (%s)\n", strerror(errno));
+        close(lsd);
+        exit(1);
+    }
+    ev.events = EPOLLIN;
+    ev.data.fd = lsd;
+    if (epoll_ctl(epollfd, EPOLL_CTL_ADD, lsd, &ev) < 0) {
+        fprintf(stderr, "Failed epoll_ctl (%s)\n", strerror(errno));
+        close(lsd);
+        close(epollfd);
+        exit(1);
+    }
+
+    int nfds;
     while (!stop) {
-        FD_ZERO(&rdfs);
-        FD_SET(lsd, &rdfs);
-        tv.tv_sec = 0;
-        tv.tv_usec = 250000;
-        int sig = select(lsd+1, &rdfs, NULL, NULL, &tv);
-        if (sig < 0) {
-            if (errno != EINTR)
-                fprintf(stderr, "%s\n", strerror(errno));
+        nfds = epoll_wait(epollfd, events, MAX_CONNECTIONS, 100);
+        if (nfds < 0) {
+            if (nfds == EINTR)
+                continue;
+            fprintf(stderr, "Failed epoll_wait (%s)\n", strerror(errno));
             break;
-        } else if (sig == 0) {
-            //timeout reached, allows us to exit on demand
-            continue;
         }
+        if (nfds > 1)
+            printf("Got %d nfds\n", nfds);
+        for (int n = 0; n < nfds; n++) {
+            if (events[n].data.fd == lsd) {
+                socklen_t addr_len = sizeof(addr);
+                int csd = accept(lsd, (struct sockaddr *)&addr, &addr_len);
+                if (csd < 0) {
+                    fprintf(stderr, "Failed to accept client socket: %s\n", strerror(errno));
+                    continue;
+                }
 
-        socklen_t addr_len = sizeof(addr);
-        int csd = accept(lsd, (struct sockaddr *)&addr, &addr_len);
-        if (csd < 0) {
-            fprintf(stderr, "Failed to accept client socket: %s\n", strerror(errno));
-            continue;
-        }
-        //Make our client socket non blocking for the initial send. We don't
-        //ever want to block the listen thread, so if a client connects and
-        //doesn't respond correctly right away just drop it and wait for a new
-        //one.
-        //int flags = fcntl(csd, F_GETFL, 0);
-        //fcntl(csd, F_GETFL, flags & ~O_NONBLOCK);
+                //Make our client socket non blocking for the initial send. We
+                //don't ever want to block the listen thread, so if a client
+                //connects and doesn't respond correctly right away just drop
+                //it and wait for a new one.
+                int flags = fcntl(csd, F_GETFL, 0);
+                fcntl(csd, F_GETFL, flags & ~O_NONBLOCK);
 
-        //Send our identity first
-        send(csd, &identity, 4, MSG_NOSIGNAL);
+                //Send our identity first
+                ssize_t s = send(csd, &identity, 4, MSG_NOSIGNAL);
+                if (s < 0) {
+                    fprintf(stderr, "Failed to send identity: (%s)\n", strerror(errno));
+                    continue;
+                } else if (s < 4) {
+                    fprintf(stderr, "Failed to send identity\n");
+                    continue;
+                }
 
-        //Read byte identifier from socket
-        uint32_t response;
-        recv(csd, &response, 4, 0);
-        if (response != sender && response != receiver) {
-            fprintf(stderr, "Client is not a valid sender or receiver\n");
-            close(csd);
-            continue;
-        }
-
-        //Read sha hash
-        static char shabuf[SHA_DIGEST_LENGTH*2+1];
-        recv(csd, shabuf, SHA_DIGEST_LENGTH*2, 0);
-        shabuf[SHA_DIGEST_LENGTH*2+1] = '\0';
-
-        static char filebuf[PATH_MAX];
-        static uint16_t fsize = 0;
-        if (response == sender) {
-            printf("got sender with hash %s\n", shabuf);
-
-            //Read incoming filename
-            recv(csd, &fsize, 2, 0);
-            fsize = ntohs(fsize);
-            ssize_t len = recv(csd, filebuf, fsize, 0);
-            if (len != fsize) {
-                fprintf(stderr, "Failed to read filename from sender\n");
-                close(csd);
-                continue;
-            }
-            filebuf[len] = '\0';
-        }
-        else if (response == receiver) {
-            printf("got receiver with hash %s\n", shabuf);
-        }
-
-        //Set the client socket to allow blocking again (in it's own thread)
-        //fcntl(csd, F_GETFL, flags | O_NONBLOCK);
-
-        memset(&tr, 0, sizeof(struct transfer_info));
-        tr.hash = shabuf;
-
-        //if got sha hash, check search tree
-        void **obj = tfind((void *)&tr, &troot, compare);
-        if (obj) {
-            //match found, this should be the receiver
-            struct transfer_info *match = (struct transfer_info *)*obj;
-            if (!tdelete(*obj, &troot, compare)) {
-                fprintf(stderr, "No hash found. Failed to delete node\n");
-                continue;
-            }
-            if (match->infd < 0) {
-                fprintf(stderr, "Found matching hash but it has a bad fd\n");
-                close(csd);
-                continue;
-            }
-            match->outfd = csd;
-            //spawn new thread
-            pthread_attr_init(&match->tattr);
-            pthread_attr_setstacksize(&match->tattr, 2048);
-            pthread_create(&match->tid, &match->tattr, relay_data, (void *)match);
-            //set the thread name so we can identify it easier
-            static char thread_name[16];
-            snprintf(thread_name, 16, "tfd-%d:%d", match->infd, match->outfd);
-            thread_name[15] = '\0';
-            pthread_setname_np(match->tid, thread_name);
-        } else {
-            //not found, this should be the sender
-            struct transfer_info *ntr = calloc(1, sizeof(struct transfer_info));
-            ntr->hash = strdup(shabuf);
-            ntr->filename = strdup(filebuf);
-            ntr->fnlen = fsize;
-            ntr->infd = csd;
-            ntr->outfd = -1;
-            obj = tsearch((void *)ntr, &troot, compare);
-            if (!obj) {
-                fprintf(stderr, "Insufficient memory to add hash to binary search tree\n");
-                transfer_info_free(ntr);
-                free(ntr);
-                close(csd);
-                continue;
+                ev.events = EPOLLIN | EPOLLONESHOT;
+                ev.data.fd = csd;
+                if (epoll_ctl(epollfd, EPOLL_CTL_ADD, csd, &ev) < 0) {
+                    fprintf(stderr, "Failed epoll_ctl on client socket (%s)\n", strerror(errno));
+                    exit(1);
+                }
+            } else {
+                printf("Socket %d got activity\n", events[n].data.fd);
+                handle_client_socket(events[n].data.fd);
             }
         }
     }
@@ -347,6 +387,7 @@ int main(int argc, char *argv[])
 
     join_finished_threads();
 
+    close(epollfd);
     shutdown(lsd, SHUT_RDWR);
     close(lsd);
 }

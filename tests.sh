@@ -88,7 +88,7 @@ function run_tests {
         if [[ $sends -eq 0 && $recvs -eq 0 ]]; then
             break
         fi
-        echo "Waiting for sends/receives to finish..."
+        echo "Waiting for sends/receives to finish ($sends sends, $recvs receives)..."
         sleep 5
     done
 

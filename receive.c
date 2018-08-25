@@ -69,9 +69,9 @@ int main(int argc, char *argv[0])
     }
 
     //Let server identify itself
-    uint32_t response;
-    recv(sd, &response, 4, 0);
-    if (response != relayid) {
+    uint32_t response = 0;
+    ssize_t len = recv(sd, &response, 4, MSG_WAITALL);
+    if (len != 4 || response != relayid) {
         fprintf(stderr, "Server didn't respond correctly\n");
         close(sd);
         exit(1);
@@ -96,7 +96,7 @@ int main(int argc, char *argv[0])
     uint16_t fsize = 0;
     recv(sd, &fsize, 2, 0);
     fsize = ntohs(fsize);
-    ssize_t len = recv(sd, filename, fsize, 0);
+    len = recv(sd, filename, fsize, 0);
     if (len == 0) {
         fprintf(stderr, "Read 0 from relay...\n");
         goto cleanup_exit;
