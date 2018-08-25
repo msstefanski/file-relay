@@ -60,6 +60,9 @@ situations. During testing on a standard workstation it's easy to hit the
 system max number of file descriptors so the trade-off is not worth it. This
 can easily be tuned to allow more on better hardware.
 
+Additionally for performance we are currently using `epoll` for better
+performance with the many socket file descriptors being managed by the relay.
+
 ## C Design
 * `int pthread_attr_setstacksize(pthread_attr_t *attr, size_t stacksize);`
   - set stack size to minimal amount needed for an 8KB buffer for splice, plus

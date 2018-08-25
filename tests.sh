@@ -71,7 +71,6 @@ function run_tests {
     for y in $(seq 1 $testcount); do
         ./send localhost:$port "$testdir"/in/test_$y.dat >> "$testdir"/secrets.txt &
     done
-    sleep 10
     #wait for secrets to be available
     while [[ $(wc -l "$testdir"/secrets.txt | cut -d" " -f1) -lt $testcount ]]; do
         sleep 1
